@@ -1,0 +1,334 @@
+---
+title: "Reanalysis of Jerby human data"
+author: "Miranda Hunter"
+date: "10/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries:
+``` {r}
+library(Seurat)
+library(tidyverse)
+library(scales)
+library(pals)
+library(cowplot)
+library(fgsea)
+library(msigdbr)
+library(data.table)
+library(mvhfunctions)
+library(R.utils)
+```
+
+## Import and process data.
+
+Import data:
+``` {r}
+counts <- fread('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/singlecell_datasets/Jerby_data/GSE115978_counts.csv.gz', stringsAsFactors = F) %>% column_to_rownames(var = "V1")
+
+meta <- fread('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/singlecell_datasets/Jerby_data/GSE115978_cell.annotations.csv.gz', stringsAsFactors = F) %>% column_to_rownames(var = "cells")
+```
+
+Rename "Mal" to tumor.
+``` {r}
+meta$cell.types <- gsub(pattern = "Mal", replacement = "Tumor", x = meta$cell.types)
+```
+
+Create Seurat object.
+``` {r}
+jerby <- CreateSeuratObject(counts = counts,
+                            project = "Jerby-Arnon_Seurat",
+                            meta.data = meta)
+jerby
+```
+
+Processing of data:
+``` {r, message = F, warning = F}
+jerby <- SCTransform(jerby, verbose = F)
+jerby <- FindVariableFeatures(jerby, verbose = F)
+jerby <- RunPCA(jerby, verbose = F)
+ElbowPlot(jerby)
+```
+
+``` {r}
+jerby <- FindNeighbors(jerby, dims = 1:10, verbose = F)
+jerby <- FindClusters(jerby, verbose = F)
+jerby <- RunUMAP(jerby, verbose = F, dims = 1:10)
+nice_dim_plot(jerby, group_by = "cell.types", label = F)
+```
+
+
+Look at suspected "interface" cluster.
+``` {r}
+cluster_res <- seq(0.3, 1.2, 0.1)
+
+for (res in cluster_res) {
+  jerby <- FindClusters(jerby, resolution = res, verbose = F)
+}
+
+plotlist <- NULL
+for (res in cluster_res) {
+  index <- which(cluster_res == res)
+  plotlist[[index]] <- nice_dim_plot(jerby, 
+                                     group_by = paste0('SCT_snn_res.', res), 
+                                     label = T) + NoLegend() + ggtitle(paste(res, 'resolution'))
+}
+plot_grid(plotlist = plotlist, nrow = 2)
+```
+
+
+``` {r}
+DimPlot(jerby, group.by = c('cell.types', 'SCT_snn_res.0.8'), label = T, label.box = T)
+```
+
+Cluster 9 looks interesting - looks like potential interface cluster. Add to metadata and calculate markers.
+``` {r}
+jerby$cell_types_new <- case_when(
+  jerby$SCT_snn_res.0.8 == 9 ~ 'interface',
+  jerby$SCT_snn_res.0.8 == 16 ~ 'CAFs',
+  jerby$SCT_snn_res.0.8 %in% c(5,6,10,17,8,11,12) ~ 'tumor',
+  jerby$SCT_snn_res.0.8 == 15 ~ 'endo',
+  TRUE ~ 'immune'
+)
+
+DimPlot(jerby, group.by = 'cell_types_new')
+
+```
+
+Subset out just tumor and interface clusters.
+``` {r}
+Idents(jerby) <- "cell_types_new"
+
+jerby_TI <- subset(jerby, idents = c('tumor', 'interface'))
+```
+
+
+## Calculate interface markers.
+``` {r}
+Idents(jerby) <- "cell_types_new"
+interface_markers_relative_to_tumor <- FindMarkers(jerby,
+                                                   ident.1 = 'interface',
+                                                   ident.2 = 'tumor',
+                                                   assay = 'SCT') %>%
+  rownames_to_column(var = "gene") %>%
+  arrange(-avg_log2FC)
+
+interface_markers_all <- FindMarkers(jerby,
+                                     ident.1 = 'interface',
+                                     assay = 'SCT') %>%
+  rownames_to_column(var = "gene") %>%
+  arrange(-avg_log2FC)
+
+# save so don't have to rerun this again
+setwd('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/singlecell_datasets/Jerby_data/')
+save(interface_markers_relative_to_tumor, file = 'interface_markers_relative_to_tumor.R')
+save(interface_markers_all, file = 'interface_markers_all.R')
+```
+
+
+## Plot top 20 genes upregulated in interface.
+``` {r}
+interface_markers_plot <- head(interface_markers_relative_to_tumor,20) 
+interface_markers_plot$gene <- factor(interface_markers_plot$gene, levels = interface_markers_plot$gene)
+
+interface_markers_plot$neuronal <- case_when(
+  interface_markers_plot$gene %in% c('NNAT', 'NEUROD1', 'NEFM', 'PPP1R17', 'SOX11', 'NEFL', 'CHRNA1') ~ 'neuronal',
+  TRUE ~ 'not neuronal'
+)
+
+ggplot(interface_markers_plot, aes(x = gene, y = avg_log2FC, fill = neuronal)) +
+  geom_bar(stat = 'identity') +
+  scale_fill_manual(values = c('#4D2F67', '#C8C8C8')) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 14, color = 'black'),
+        axis.title = element_text(size = 16, color = 'black'),
+        axis.text.x = element_text(angle = -45, hjust = 0, vjust = 0.5),
+        axis.title.y = element_blank()) +
+  xlab('log2FC in interface') 
+```
+
+
+## Clean up cell type annotations (original cell types)
+``` {r}
+
+jerby$cell.types <- gsub(pattern = 'Endo.', replacement = 'Endothelial', x = jerby[[]]$cell.types) %>%
+  gsub(pattern = 'T.CD4', replacement = 'CD4 T cell', x = .) %>%
+  gsub(pattern = 'T.CD8', replacement = 'CD8 T cell', x = .) %>%
+  gsub(pattern = 'B.cell', replacement = "B cell", x = .) %>%
+  gsub(pattern = 'NK', replacement = 'NK cell', x = .) %>%
+  gsub(pattern = 'T.cell', replacement = "T cell", x = .)
+
+
+# also add another cell type annotation calling interface "Tumor (HMGB2-hi)"
+jerby$cell_types_new_HMG <- gsub(pattern = 'interface', replacement = 'tumor (HMGB2-high)', x = jerby$cell_types_new)
+
+nice_dim_plot(jerby, group_by = 'cell.types', label = F)
+nice_dim_plot(jerby, group_by = 'cell_types_new_HMG', label = F)
+```
+
+
+## GSEA: interface cluster
+``` {r}
+human.genes <- msigdbr(species = "Homo sapiens")
+pathways.GOBP <- filter(human.genes, gs_subcat == "GO:BP") %>% split(x = .$gene_symbol, f = .$gs_name) # GO BP
+```
+
+
+``` {r}
+set.seed(100)
+
+# remove ribosomal genes
+interface_tumor_genelist <- interface_markers_relative_to_tumor %>% 
+  dplyr::select(gene, avg_log2FC) %>% 
+  .[!startsWith(.$gene, c('RPS', 'RPL')),]
+
+interface_tumor_gsea <- fgseaMultilevel(pathways = pathways.GOBP,
+                                        stats = deframe(interface_tumor_genelist)) %>%
+  arrange(-NES)
+interface_tumor_gsea
+```
+
+
+## GSEA barcode plots:
+``` {r}
+limma::barcodeplot(statistics = deframe(interface_tumor_genelist), 
+                   index = pathways.GOBP[['GOBP_CELL_FATE_SPECIFICATION']],
+                   quantiles = c(0,0),
+                   main = 'GOBP_CELL_FATE_SPECIFICATION')
+
+limma::barcodeplot(statistics = deframe(interface_tumor_genelist), 
+                   index = pathways.GOBP[['GOBP_REGULATION_OF_NEURON_DIFFERENTIATION']],
+                   quantiles = c(0,0),
+                   main = 'GOBP_REGULATION_OF_NEURON_DIFFERENTIATION')
+```
+
+
+## Plot expression of melanocyte genes.
+``` {r}
+plots <- FeaturePlot(jerby_TI, 
+            features = c('MITF', 'TYRP1', 'PMEL',  'SOX9', 'SOX10', 'SOX11'),
+            order = T,
+            pt.size = 0.4,
+            combine = F)
+plots <- lapply(plots, function(x) {
+  x + scale_color_gradientn(colors = viridis(n = 100))
+})
+plot_grid(plotlist = plots, align = 'hv', axis = 'lrbt', nrow = 2)
+```
+
+
+## Map interface genes from Nat Comms paper onto this dataset.
+``` {r}
+load('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/seuratobjs/EF_integrated_allgenes_new.R')
+
+Idents(EF.filt) <- "integrated_cell_type"
+SC_interface_genes <- FindMarkers(EF.filt,
+                                  ident.1 = "interface",
+                                  assay = "SCT") %>%
+  rownames_to_column(var = "gene") %>%
+  filter(p_val_adj <= 0.05) %>%
+  arrange(-avg_log2FC)
+
+jerby_TI <- AddModuleScore(jerby_TI,
+                        features = list(SC_interface_genes %>% filter(avg_log2FC >= 0.5) %>% pull(gene) %>% convert_to_human_list_MVH() %>% intersect(rownames(jerby_TI), .)),
+                        name = "SC_interface")
+
+nice_feature_plot(jerby_TI, features = "SC_interface1", pt.size = 0.5)
+```
+
+Scale the interface expression score and add to metadata.
+``` {r}
+jerby_TI$SC_interface_scaled <- rescale(jerby_TI$SC_interface1, to = c(0,1))
+
+nice_feature_plot(jerby_TI, features = 'SC_interface_scaled', pt.size = 1.5) + scale_color_gradientn(colors = inferno(n = 100))
+```
+
+
+
+## Score cells with Tsoi gene sets and classify into states.
+``` {r}
+tsoi_genelists <- readxl::read_excel('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/Tsoi_2018_genesets.xlsx')
+```
+
+Scoring:
+``` {r}
+colnames(tsoi_genelists) <- tsoi_genelists[1,]
+tsoi_genelists <- tsoi_genelists[2:nrow(tsoi_genelists),]
+
+sigs <- unique(tsoi_genelists$Signature)
+
+for (geneset in sigs) {
+  
+  genes <- tsoi_genelists %>% filter(Signature == geneset) %>% pull(Gene)
+  jerby_TI <- AddModuleScore(jerby_TI,
+                             features = list(intersect(genes, rownames(jerby))),
+                             name = geneset)
+}
+```
+
+Scale scores between 0 and 1 and add to metadata.
+``` {r}
+tsoi_sig_scores <- jerby_TI[[]] %>% 
+  #rownames_to_column(var = 'cell') %>%
+  dplyr::select(all_of(paste0(sigs,'1'))) 
+
+tsoi_sig_scores_scaled <- apply(tsoi_sig_scores, 2, rescale, to = c(0,1)) %>% data.frame()
+
+jerby_TI <- AddMetaData(jerby_TI,
+                        metadata = tsoi_sig_scores_scaled,
+                        col.name = paste0(sigs, '_scaled'))
+
+```
+
+Plot scores for each state in interface cells only.
+``` {r}
+scores_plot_scaled <- jerby_TI[[]] %>% 
+  dplyr::select(all_of(c('cell_types_new', paste0(sigs, '_scaled')))) %>%
+  melt()
+
+scores_plot_scaled$variable <- gsub('_scaled', '', scores_plot_scaled$variable)
+scores_plot_scaled$variable <- factor(scores_plot_scaled$variable, levels = rev(sigs))
+
+ggplot(scores_plot_scaled %>% dplyr::filter(cell_types_new == 'interface'), aes(y = value, x = variable, fill = variable)) +
+  geom_violin(scale = 'width', aes(color = variable)) +
+  geom_jitter(size = 0.00001) +
+  ggtitle('Tsoi cell state module scores - interface') +
+  scale_fill_manual(values = tol(n = length(sigs))) +
+  scale_color_manual(values = tol(n = length(sigs))) +
+  ylab('Tsoi cell state module score') +
+  theme(axis.text = element_text(size = 12, color = 'black'),
+        axis.text.x = element_text(angle = -45, hjust = 0, vjust = 0),
+        axis.title.x = element_blank(),
+        axis.title = element_text(size = 14, color = 'black'),
+        legend.position = 'none',
+        plot.title = element_text(size = 15),
+        plot.margin = margin(r = 75, l = 20, t = 20, b = 20))
+```
+
+
+Classify cells based on which state they have the highest score for.
+``` {r}
+scores_all <- jerby_TI[[]] %>% dplyr::select(Undifferentiated_scaled, `Neural crest-like_scaled`, Transitory_scaled, Melanocytic_scaled)
+scores_all$highest_score <- colnames(scores_all)[apply(scores_all, 1, which.max)]
+
+jerby_TI <- AddMetaData(jerby_TI,
+                        metadata = scores_all %>% dplyr::select(highest_score),
+                        col.name = 'highest_module')
+```
+
+Plot:
+``` {r}
+nice_dim_plot(jerby_TI, group_by = 'highest_module', label = F)
+```
+
+## Plot HMGB2 expression across cell types.
+``` {r}
+jerby$cell_types_new <- factor(jerby$cell_types_new, levels = c('tumor', 'interface', 'CAFs', 'endo', 'immune'))
+
+p1 <- nice_feature_plot(jerby, features = 'HMGB2', order = F, pt.size = 0.75) + scale_color_gradientn(colors = viridis(n = 100))
+p2 <- VlnPlot(jerby, features = 'HMGB2', group.by = 'cell_types_new', pt.size = 0, cols = tol(5)) + NoLegend()
+plot_grid(p1,p2, nrow = 1, align = 'hv', axis = 'lrbt')
+```
