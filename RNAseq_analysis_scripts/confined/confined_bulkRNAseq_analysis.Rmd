@@ -22,6 +22,8 @@ library(data.table)
 library(mvhfunctions)
 ```
 
+## Import data and run DESeq2.
+
 Import counts matrices and organize data.
 ``` {r}
 wd <- '/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/bulk_rnaseq_datasets/confined_A375/' 
@@ -73,7 +75,7 @@ deseq_matrix <- DESeqDataSetFromMatrix(countData = counts_matrix,
 deseq_matrix
 ```
 
-Pre filter low count genes? Is this necessary?
+Pre filter low count genes:
 ``` {r}
 keep <- rowSums(counts(deseq_matrix)) >= 1 # remove any gene with 1 or fewer counts 
 deseq_matrix <- deseq_matrix[keep, ]
@@ -85,7 +87,7 @@ deseq_matrix <- DESeq(deseq_matrix, betaPrior = T)
 resultsNames(deseq_matrix)
 ```
 
-Make some comparisons across the 3 groups.
+Make some comparisons across groups.
 ``` {r}
 # for contrast: whatever the fold change is relative to goes last!!!!
 dp_res <- results(deseq_matrix, contrast = c("condition", "C", "NC"))
@@ -152,91 +154,7 @@ message(paste(PC2_low, sep = " ", collapse = ", "))
 
 ```
 
-Volcano plot:
-``` {r}
-for_volcano <- dp_res_df_named_confined
-
-for_volcano$up_or_down <- case_when(
-  for_volcano$log2FoldChange > 0 ~ 'up',
-  TRUE ~ 'down'
-)
-
-genes_to_label <- for_volcano %>% filter(log2FoldChange > 0.5 & -log10(padj) > 11 | log2FoldChange < -0.5 & -log10(padj) > 3)
-
-
-n_down <- for_volcano[!is.na(for_volcano$padj),] %>% filter(log2FoldChange < 0) %>% nrow()
-n_up <- for_volcano[!is.na(for_volcano$padj),] %>% filter(log2FoldChange > 0) %>% nrow()
-
-ggplot(for_volcano, aes(x = log2FoldChange, y = -log10(padj), color = up_or_down)) +
-  #geom_hline(yintercept = -log10(0.05), linetype = 'dashed') +
-  geom_point() +
-  scale_color_manual(values = c('#3CBCCE', '#CE4E3C'),
-                     labels = c(paste('downregulated genes\nn =', n_down), 
-                                paste('upregulated genes\nn =', n_up))) +
-  #scale_color_discrete() +
-  #theme_minimal() +
-  ylab('-log10 adjusted p-value') +
-  xlab('log2 fold change') +
-  theme(axis.text = element_text(size = 14, color = 'black'),
-        axis.title = element_text(size = 16, color = 'black'),
-        legend.title = element_blank(),
-        legend.text = element_text(size = 12, color = 'black')) +
-  geom_text_repel(data = genes_to_label, aes(label = hgnc_symbol),
-                  box.padding = unit(0.5, 'lines'),
-                  point.padding = unit(0.75, 'lines'),
-                  max.overlaps = 10,
-                  min.segment.length = 0,
-                  color = 'black',
-                  #seed = 101,
-                  show.legend = F) 
-
-
-```
-
-Highlight genes w/sig p-value
-``` {r}
-for_volcano <- dp_res_df_named_confined
-
-for_volcano$up_or_down <- case_when(
-  for_volcano$log2FoldChange > 0 & for_volcano$padj < 0.05 ~ 'up',
-  for_volcano$log2FoldChange < 0 & for_volcano$padj < 0.05 ~ 'down',
-  TRUE ~ 'neither'
-)
-
-genes_to_label <- for_volcano %>% filter(log2FoldChange > 0.5 & -log10(padj) > 11 | log2FoldChange < -0.5 & -log10(padj) > 3)
-
-
-n_down <- for_volcano[!is.na(for_volcano$padj),] %>% filter(log2FoldChange < 0 & padj < 0.05) %>% nrow()
-n_up <- for_volcano[!is.na(for_volcano$padj),] %>% filter(log2FoldChange > 0 & padj < 0.05) %>% nrow()
-
-ggplot(for_volcano, aes(x = log2FoldChange, y = -log10(padj), color = up_or_down)) +
-  geom_hline(yintercept = -log10(0.05), linetype = 'dashed') +
-  geom_point() +
-  scale_color_manual(values = c('#3CBCCE',  'grey', '#CE4E3C'),
-                     labels = c(paste('downregulated genes\nn =', n_down), 
-                                paste('upregulated genes\nn =', n_up),
-                                'neither')) +
-  #scale_color_discrete() +
-  #theme_minimal() +
-  ylab('-log10 adjusted p-value') +
-  xlab('log2 fold change') +
-  theme(axis.text = element_text(size = 14, color = 'black'),
-        axis.title = element_text(size = 16, color = 'black'),
-        legend.title = element_blank(),
-        legend.text = element_text(size = 12, color = 'black')) +
-  geom_text_repel(data = genes_to_label, aes(label = hgnc_symbol),
-                  box.padding = unit(0.5, 'lines'),
-                  point.padding = unit(0.75, 'lines'),
-                  max.overlaps = 10,
-                  min.segment.length = 0,
-                  color = 'black',
-                  #seed = 101,
-                  show.legend = F) 
-
-
-```
-
-
+## Add gene names
 
 Load gene list:
 ``` {r}
@@ -285,7 +203,7 @@ vst_norm_matrix_named <- merge(x = vst_norm_matrix,
 ```
 
 
-Add ENSEMBL ID to hgnc_genes column in cases where there isn't a gene name. This will make life easier for certain analyses later on.
+Add ENSEMBL ID to hgnc_genes column in cases where there isn't a gene name. 
 ``` {r}
 dp_res_df_named$hgnc_symbol <- case_when(
   dp_res_df_named$hgnc_symbol == "" ~ dp_res_df_named$Ensembl,
@@ -304,40 +222,6 @@ counts_matrix_named$hgnc_symbol <- case_when(
 ```
 
 
-QC: plot number of counts per group.
-``` {r}
-total_UMIs <- colSums(counts_matrix[,-1]) %>% data.frame() %>% rownames_to_column(var = "group_name")
-colnames(total_UMIs)[2] <- 'total_UMIs'
-total_UMIs$group <- c("NC", "NC", "NC", "C", "C", "C")
-total_UMIs$group <- factor(total_UMIs$group, levels = c("NC", "C"))
-
-ggplot(total_UMIs, aes(x = group, y = total_UMIs, fill = group)) +
-  geom_violin(scale = "width") +
-  geom_point(size = 2.5) +
-  ggtitle("total # of UMIs detected per sample") +
-  ylab('# UMIs') +
-  theme(axis.text.y = element_text(size = 16, color = "black"),
-        axis.text.x = element_text(size = 18, color = "black"),
-        axis.title.y = element_text(size = 18, color = "black"),
-        axis.title.x = element_blank(),
-        plot.title = element_text(size = 18, color = "black", face = "bold", hjust = 0.5),
-        legend.position = "none") +
-  coord_cartesian(ylim = c(0,60000000))
-
-# also plot per sample
-ggplot(total_UMIs, aes(x = group_name, y = total_UMIs, fill = group)) +
-  geom_bar(stat = 'identity') +
-  scale_fill_manual(values = c('#44A1F8', '#8B2152')) +
-  theme(axis.text = element_text(size = 16, color = 'black'),
-        axis.title = element_text(size = 18, color = 'black', face = 'bold'),
-        axis.title.x = element_blank(),
-        legend.position = 'none') +
-  ylab('# of UMIs per sample')
-
-```
-
-
-
 ## Start here if loading in previous results.
 ``` {r}
 load('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/bulk_rnaseq_datasets/confined_A375/counts_matrix_named_confined.R')
@@ -346,102 +230,32 @@ load('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcu
 ```
 
 
-Run GSEA: NO CUTOFF
+## Run GSEA
+
 Load pathways.
 ``` {r}
 human.genes <- msigdbr(species = "Homo sapiens")
-pathways.hallmark <- filter(human.genes, gs_cat == "H") %>% split(x = .$gene_symbol, f = .$gs_name) # Hallmark
 pathways.GOBP <- filter(human.genes, gs_subcat == "GO:BP") %>% split(x = .$gene_symbol, f = .$gs_name) # GO BP
-#pathways.GOCC <- filter(human.genes, gs_subcat == "GO:CC") %>% split(x = .$gene_symbol, f = .$gs_name) # GO CC
 ```
 
-
-Make genelist for GSEA (same information as DESeq2 results above, just in a different format)
-``` {r}
-gsea_genelist <- dp_res_df_named_confined %>% dplyr::select(hgnc_symbol, log2FoldChange) %>% deframe()
-```
 
 GSEA with GO biological processes pathway set.
 ``` {r}
-set.seed(100) # use the same set of random numbers every time for reproducibility
-
-# GO biological pathways
-gsea_gobp <- fgseaSimple(pathways = pathways.GOBP,
-                           stats = gsea_genelist,
-                         nperm = 10000) %>%
-  mutate(log10pval = -log10(pval)) %>%
-  dplyr::select(pathway, pval, log10pval, everything()) %>%
-  arrange(desc(NES)) 
-  
-gsea_gobp
-```
-
-And with only significant genes:
-``` {r}
-dp_res_df_named_confined_sig <- dp_res_df_named_confined %>% filter(padj < 0.05)
-
-gsea_gobp_sig <- fgseaSimple(pathways = pathways.GOBP,
-                             stats = dp_res_df_named_confined_sig %>% dplyr::select(hgnc_symbol, log2FoldChange) %>% deframe(),
-                             nperm = 10000) %>%
-  mutate(log10pval = -log10(pval)) %>%
-  dplyr::select(pathway, pval, log10pval, everything()) %>%
-  arrange(desc(NES)) 
-
-gsea_gobp_sig
-
-```
-
-Hallmark:
-``` {r}
-set.seed(100) # use the same set of random numbers every time for reproducibility
-
-# GO biological pathways
-gsea_hallmark <- fgseaSimple(pathways = pathways.hallmark,
-                           stats = gsea_genelist,
-                         nperm = 10000) %>%
-  mutate(log10pval = -log10(pval)) %>%
-  dplyr::select(pathway, pval, log10pval, everything()) %>%
-  arrange(desc(NES)) 
-  
-gsea_hallmark
-
-```
-
-GO cellular component:
-``` {r}
-set.seed(100) # use the same set of random numbers every time for reproducibility
-
-# GO biological pathways
-gsea_gocc <- fgseaSimple(pathways = pathways.GOCC,
-                           stats = gsea_genelist,
-                         nperm = 1000) %>%
-  mutate(log10pval = -log10(pval)) %>%
-  dplyr::select(pathway, pval, log10pval, everything()) %>%
-  arrange(desc(NES)) 
-  
-gsea_gocc
-```
-
-Run GSEA: 0.25 cutoff
-Make genelist for GSEA (same information as DESeq2 results above, just in a different format)
-``` {r}
+gsea_genelist <- dp_res_df_named_confined %>% dplyr::select(hgnc_symbol, log2FoldChange) %>% deframe()
 cutoff <- 0.25
 gsea_genelist_filt <- gsea_genelist[gsea_genelist > cutoff | gsea_genelist < -cutoff]
 
-```
-
-GSEA with GO biological processes pathway set.
-``` {r}
-set.seed(101) # use the same set of random numbers every time for reproducibility
-
-# GO biological pathways
+set.seed(101) 
 gsea_gobp_filt <- fgseaSimple(pathways = pathways.GOBP,
-                           stats = gsea_genelist_filt,
-                           nperm = 10000) %>%
+                              stats = gsea_genelist_filt,
+                              nperm = 10000) %>%
   mutate(log10pval = -log10(pval)) %>%
   dplyr::select(pathway, pval, log10pval, everything()) %>%
   arrange(desc(NES)) 
 
 gsea_gobp_filt
 ```
+
+
+
 
