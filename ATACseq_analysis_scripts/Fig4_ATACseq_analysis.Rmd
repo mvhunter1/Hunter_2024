@@ -1,0 +1,117 @@
+---
+title: "ATACseq_fig_HMG_paper"
+author: "Miranda Hunter"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries:
+``` {r}
+library(ggplot2)
+library(DESeq2)
+library(RColorBrewer)
+library(gplots)
+library(genefilter)
+library(pheatmap)
+library(ggrepel)
+library(stringr)
+# below are for *genome assembly-specific* peak annotations:
+library(GenomicRanges)
+library(ChIPseeker)
+library(rtracklayer)
+library(Rsubread) # for getInBuiltAnnotation
+library(clusterProfiler) # for the bitr function, amongst others
+library(msigdbr)
+library(mvhfunctions)
+library(tidyverse)
+```
+
+Load ATAC data:
+``` {r}
+setwd('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/bulk_ATACseq_analysis/')
+load('all_DE_peaks_no_cutoff.R')
+load('all_DE_peaks_1point5cutoff.R')
+load('DESeq2_res.R')
+load('egoBPupreg_df.R')
+load('egoBPdownreg_df.R')
+```
+
+Volcano plot:
+``` {r}
+load('/Users/hunterm/Library/CloudStorage/GoogleDrive-hunterm@mskcc.org/.shortcut-targets-by-id/1L5uwxnNO44Pd7GBMBhMGO9vvsi7uifYZ/White Lab Gsuite Main Drive/Lab members/Miranda Hunter_GSuite/Miranda_R_new/bulk_ATACseq_analysis/DESeq2_res.R')
+
+plot_data <- data.frame(log2FC = res$log2FoldChange,
+                        pval = res$padj)
+
+# add labelling of colors
+plot_data$label <- case_when(
+  plot_data$log2FC > threshlog2fc & plot_data$pval < threshpadj ~ 'up',
+  plot_data$log2FC < -threshlog2fc & plot_data$pval < threshpadj ~ 'down',
+  TRUE ~ 'neither'
+)
+
+n_down <- nrow(plot_data %>% filter(label == 'down'))
+n_up <- nrow(plot_data %>% filter(label == 'up'))
+
+ggplot(plot_data, aes(x = log2FC, y = -log10(pval), color = label)) +
+  geom_point() +
+  scale_color_manual(values = c('#48286D', 'grey', '#18961B'),
+                     labels = c(paste('downregulated peaks\nn =', n_down),
+                                'neither',
+                                paste('upregulated peaks\nn =', n_up))) +
+  #geom_hline(yintercept = -log10(0.05), linetype = 'dashed')
+  xlim(-3,3) +
+  ylab('-log10 adjusted p-value') +
+  xlab('log2 fold change') +
+  #theme_minimal() +
+theme(axis.text = element_text(size = 14, color = 'black'),
+        axis.title = element_text(size = 16, color = 'black'),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12, color = 'black'),
+      panel.background = element_rect(fill = '#EEEEEE95')) 
+
+```
+
+
+ATAC-seq: dot plot
+Upregulated pathways:
+``` {r}
+# top 30 genes
+egoBPupreg_df <- as.data.frame(egoBPupreg) %>% arrange(-Count) 
+egoBPupreg_df$Description <- factor(egoBPupreg_df$Description, levels = rev(egoBPupreg_df$Description))
+ggplot(head(egoBPupreg_df,30), aes(x = Count, y = Description, color = p.adjust, size = Count)) +
+  geom_point() +
+  scale_color_gradient2(high = '#F83355', mid = "#576FF3", low = "#576FF3") +
+  theme(axis.text = element_text(size = 12, color = "black"),
+        axis.title.y = element_blank()) +
+  xlab('# of DE genes in pathway') +
+  ggtitle('Upregulated - gene ratio')
+
+# top 15 genes
+egoBPupreg_df <- as.data.frame(egoBPupreg) %>% arrange(-Count) 
+egoBPupreg_df$Description <- factor(egoBPupreg_df$Description, levels = rev(egoBPupreg_df$Description))
+ggplot(head(egoBPupreg_df,15), aes(x = Count, y = Description, color = p.adjust, size = Count)) +
+  geom_point() +
+  #scale_color_gradientn(colors = viridis(n = 100)) +
+  scale_color_gradient2(high = '#F83355', mid = "#576FF3", low = "#576FF3") +
+  theme(axis.text = element_text(size = 12, color = "black"),
+        axis.title.y = element_blank()) +
+  xlab('# of DE genes in pathway') +
+  ggtitle('Upregulated - gene ratio')
+
+```
+
+
+
+
+
+
+
+
+
+
+
